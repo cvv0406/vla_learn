@@ -983,7 +983,7 @@ class MotorsBus(abc.ABC):
         if not self._is_comm_success(comm) and raise_on_error:
             raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
         elif self._is_error(error) and raise_on_error:
-            raise RuntimeError(f"{err_msg} {self.packet_handler.getRxPacketError(error)}")
+            raise RuntimeError(f"{err_msg} servo_error={error} (0x{error:02X}) {self.packet_handler.getRxPacketError(error)}")
 
         return value, comm, error
 
@@ -1046,7 +1046,7 @@ class MotorsBus(abc.ABC):
         if not self._is_comm_success(comm) and raise_on_error:
             raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
         elif self._is_error(error) and raise_on_error:
-            raise RuntimeError(f"{err_msg} {self.packet_handler.getRxPacketError(error)}")
+            raise RuntimeError(f"{err_msg} servo_error={error} (0x{error:02X}) {self.packet_handler.getRxPacketError(error)}")
 
         return comm, error
 
@@ -1056,7 +1056,7 @@ class MotorsBus(abc.ABC):
         motors: str | list[str] | None = None,
         *,
         normalize: bool = True,
-        num_retry: int = 0,
+        num_retry: int = 1,
     ) -> dict[str, Value]:
         """Read the same register from several motors at once.
 
@@ -1104,7 +1104,7 @@ class MotorsBus(abc.ABC):
         length: int,
         motor_ids: list[int],
         *,
-        num_retry: int = 0,
+        num_retry: int = 1,
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> tuple[dict[int, int], int]:
@@ -1113,7 +1113,7 @@ class MotorsBus(abc.ABC):
             comm = self.sync_reader.txRxPacket()
             if self._is_comm_success(comm):
                 break
-            logger.debug(
+            logger.info(
                 f"Failed to sync read @{addr=} ({length=}) on {motor_ids=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
@@ -1151,7 +1151,7 @@ class MotorsBus(abc.ABC):
         values: Value | dict[str, Value],
         *,
         normalize: bool = True,
-        num_retry: int = 0,
+        num_retry: int = 1,
     ) -> None:
         """Write the same register on multiple motors.
 
@@ -1192,7 +1192,7 @@ class MotorsBus(abc.ABC):
         addr: int,
         length: int,
         ids_values: dict[int, int],
-        num_retry: int = 0,
+        num_retry: int = 1,
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> int:
@@ -1201,7 +1201,7 @@ class MotorsBus(abc.ABC):
             comm = self.sync_writer.txPacket()
             if self._is_comm_success(comm):
                 break
-            logger.debug(
+            logger.info(
                 f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
