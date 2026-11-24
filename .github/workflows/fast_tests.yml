@@ -57,7 +57,8 @@ jobs:
   # It runs everytime we commit to a PR or push to main
   fast-pytest-tests:
     name: Fast Pytest Tests
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04 supplies FFmpeg 6, supported by TorchCodec 0.5.
+    runs-on: ubuntu-24.04
     env:
       MUJOCO_GL: egl
     steps:
@@ -82,6 +83,15 @@ jobs:
 
       - name: Install lerobot with test extras
         run: uv sync --extra "test"
+
+      - name: Verify TorchCodec can decode a frame
+        run: |
+          uv run --no-sync python - <<'PY'
+          from torchcodec.decoders import VideoDecoder
+
+          frame = VideoDecoder("tests/artifacts/cameras/image_128x128.png")[0]
+          assert frame.shape == (3, 128, 128)
+          PY
 
       - name: Run pytest
         run: uv run pytest tests -vv --maxfail=10
