@@ -28,6 +28,8 @@ on:
       - "src/**"
       - "tests/**"
       - ".github/workflows/**"
+      - "docker/**"
+      - ".dockerignore"
       - "pyproject.toml"
       - "Makefile"
 
@@ -51,7 +53,8 @@ jobs:
   # It runs everytime a PR is approved or a push to main
   full-tests:
     name: Full Tests
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04 supplies FFmpeg 6, supported by TorchCodec 0.5.
+    runs-on: ubuntu-24.04
     if: |
       (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
       github.event_name == 'push' ||
@@ -80,23 +83,58 @@ jobs:
       - name: Install lerobot with all extras
         run: uv sync --all-extras
 
+      - name: Verify TorchCodec can decode a frame
+        run: |
+          uv run --no-sync python - <<'PY'
+          from torchcodec.decoders import VideoDecoder
+
+          frame = VideoDecoder("tests/artifacts/cameras/image_128x128.png")[0]
+          assert frame.shape == (3, 128, 128)
+          PY
+
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv --maxfail=10
 
       - name: Run end-to-end tests
         run: uv run make test-end-to-end
 
+  build-course-docker:
+    name: Build and test SO-101 CPU Docker image
+    if: |
+      github.repository != 'huggingface/lerobot' &&
+      (github.event_name != 'pull_request_review' || github.event.review.state == 'approved')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
+      - name: Build the user image with SO-101 dependencies
+        run: |
+          docker build -f docker/Dockerfile.user -t lerobot-so101:test \
+            --build-arg UV_TORCH_BACKEND=cpu --build-arg LEROBOT_EXTRAS=feetech .
+      - name: Import the course robot and teleoperator inside the image
+        run: |
+          docker run --rm -i lerobot-so101:test python - <<'PY'
+          import torch
+          from lerobot.robots.bi_so101_follower import BiSO101Follower
+          from lerobot.teleoperators.bi_so101_leader import BiSO101Leader
+
+          assert torch.version.cuda is None, torch.__version__
+          print(BiSO101Follower.name, BiSO101Leader.name)
+          PY
+
   # This job builds a GPU enabled image for testing
   # It runs everytime a PR is approved or a push to main
   # TODO(Steven): For now we skip this job for community PRs
   build-and-push-docker:
-    name: Build and Push Docker
+    name: Publish upstream GPU test image
     runs-on:
       group: aws-general-8-plus
     if: |
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
+      github.repository == 'huggingface/lerobot' &&
+      (github.event_name != 'pull_request_review' ||
+       (github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false))
     outputs:
       image_tag: ${{ steps.set_tag.outputs.image_tag }}
     env:
@@ -144,7 +182,7 @@ jobs:
   # This job runs pytest with all extras in a GPU enabled host
   # It runs everytime a test image is created
   gpu-tests:
-    name: GPU Tests
+    name: GPU Tests (requires upstream GPU runner)
     needs: [build-and-push-docker]
     runs-on:
       group: aws-g6-4xlarge-plus
