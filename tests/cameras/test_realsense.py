@@ -55,49 +55,64 @@ def fixture_patch_realsense():
         yield mock
 
 
-def test_abc_implementation():
+@pytest.fixture
+def make_camera(request):
+    def create_camera(config):
+        camera = RealSenseCamera(config)
+
+        def disconnect_if_connected():
+            if camera.is_connected:
+                camera.disconnect()
+
+        request.addfinalizer(disconnect_if_connected)
+        return camera
+
+    return create_camera
+
+
+def test_abc_implementation(make_camera):
     """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
     config = RealSenseCameraConfig(serial_number_or_name="042")
-    _ = RealSenseCamera(config)
+    _ = make_camera(config)
 
 
-def test_connect():
+def test_connect(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
 
     camera.connect(warmup=False)
     assert camera.is_connected
 
 
-def test_connect_already_connected():
+def test_connect_already_connected(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
     camera.connect(warmup=False)
 
     with pytest.raises(DeviceAlreadyConnectedError):
         camera.connect(warmup=False)
 
 
-def test_connect_invalid_camera_path(patch_realsense):
+def test_connect_invalid_camera_path(make_camera, patch_realsense):
     patch_realsense.side_effect = mock_rs_config_enable_device_bad_file
     config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
 
     with pytest.raises(ConnectionError):
         camera.connect(warmup=False)
 
 
-def test_invalid_width_connect():
+def test_invalid_width_connect(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042", width=99999, height=480, fps=30)
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
 
     with pytest.raises(ConnectionError):
         camera.connect(warmup=False)
 
 
-def test_read():
+def test_read(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
     camera.connect(warmup=False)
 
     img = camera.read()
@@ -106,26 +121,26 @@ def test_read():
 
 # TODO(Steven): Fix this test for the latest version of pyrealsense2.
 @pytest.mark.skip("Skipping test: pyrealsense2 version > 2.55.1.6486")
-def test_read_depth():
+def test_read_depth(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, use_depth=True)
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
     camera.connect(warmup=False)
 
     img = camera.read_depth(timeout_ms=2000)  # NOTE(Steven): Reading depth takes longer in CI environments.
     assert isinstance(img, np.ndarray)
 
 
-def test_read_before_connect():
+def test_read_before_connect(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
 
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.read()
 
 
-def test_disconnect():
+def test_disconnect(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
     camera.connect(warmup=False)
 
     camera.disconnect()
@@ -133,46 +148,38 @@ def test_disconnect():
     assert not camera.is_connected
 
 
-def test_disconnect_before_connect():
+def test_disconnect_before_connect(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
 
     with pytest.raises(DeviceNotConnectedError):
         camera.disconnect()
 
 
-def test_async_read():
+def test_async_read(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
     camera.connect(warmup=False)
 
-    try:
-        img = camera.async_read()
+    img = camera.async_read()
 
-        assert camera.thread is not None
-        assert camera.thread.is_alive()
-        assert isinstance(img, np.ndarray)
-    finally:
-        if camera.is_connected:
-            camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
+    assert camera.thread is not None
+    assert camera.thread.is_alive()
+    assert isinstance(img, np.ndarray)
 
 
-def test_async_read_timeout():
+def test_async_read_timeout(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
     camera.connect(warmup=False)
 
-    try:
-        with pytest.raises(TimeoutError):
-            camera.async_read(timeout_ms=0)
-    finally:
-        if camera.is_connected:
-            camera.disconnect()
+    with pytest.raises(TimeoutError):
+        camera.async_read(timeout_ms=0)
 
 
-def test_async_read_before_connect():
+def test_async_read_before_connect(make_camera):
     config = RealSenseCameraConfig(serial_number_or_name="042")
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
 
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.async_read()
@@ -188,9 +195,9 @@ def test_async_read_before_connect():
     ],
     ids=["no_rot", "rot90", "rot180", "rot270"],
 )
-def test_rotation(rotation):
+def test_rotation(make_camera, rotation):
     config = RealSenseCameraConfig(serial_number_or_name="042", rotation=rotation)
-    camera = RealSenseCamera(config)
+    camera = make_camera(config)
     camera.connect(warmup=False)
 
     img = camera.read()
