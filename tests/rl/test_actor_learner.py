@@ -16,7 +16,7 @@
 
 import socket
 import threading
-import time
+from contextlib import contextmanager
 
 import pytest
 import torch
@@ -26,6 +26,31 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.utils.transition import Transition
 from tests.utils import require_package
+
+RECEIVE_TIMEOUT = 5
+
+
+@contextmanager
+def connected_workers(learner_thread, actor_thread, learner_client, channel, shutdown_event):
+    from lerobot.scripts.rl.actor import establish_learner_connection
+
+    with channel:
+        learner_thread.start()
+        try:
+            assert establish_learner_connection(learner_client, shutdown_event, attempts=5)
+            actor_thread.start()
+            yield
+        finally:
+            shutdown_event.set()
+            learner_thread.join()
+            if actor_thread.ident is not None:
+                actor_thread.join()
+
+
+def assert_no_more_messages(received_queue):
+    # The marker follows any messages still buffered by the multiprocessing queue's feeder.
+    received_queue.put(None)
+    assert received_queue.get(timeout=RECEIVE_TIMEOUT) is None
 
 
 def create_test_transitions(count: int = 3) -> list[Transition]:
@@ -91,7 +116,6 @@ def cfg():
 @pytest.mark.timeout(10)  # force cross-platform watchdog
 def test_end_to_end_transitions_flow(cfg):
     from lerobot.scripts.rl.actor import (
-        establish_learner_connection,
         learner_service_client,
         push_transitions_to_transport_queue,
         send_transitions,
@@ -112,38 +136,24 @@ def test_end_to_end_transitions_flow(cfg):
         target=start_learner,
         args=(parameters_queue, transitions_learner_queue, interactions_queue, shutdown_event, cfg),
     )
-    learner_thread.start()
 
     policy_cfg = cfg.policy
     learner_client, channel = learner_service_client(
         host=policy_cfg.actor_learner_config.learner_host, port=policy_cfg.actor_learner_config.learner_port
     )
 
-    assert establish_learner_connection(learner_client, shutdown_event, attempts=5)
-
     send_transitions_thread = threading.Thread(
         target=send_transitions, args=(cfg, transitions_actor_queue, shutdown_event, learner_client, channel)
     )
-    send_transitions_thread.start()
-
     input_transitions = create_test_transitions(count=5)
-
-    push_transitions_to_transport_queue(input_transitions, transitions_actor_queue)
-
-    # Wait for learner to start
-    time.sleep(0.1)
-
-    shutdown_event.set()
-
-    # Wait for learner to receive transitions
-    learner_thread.join()
-    send_transitions_thread.join()
-    channel.close()
-
     received_transitions = []
-    while not transitions_learner_queue.empty():
-        received_transitions.extend(bytes_to_transitions(transitions_learner_queue.get()))
+    with connected_workers(learner_thread, send_transitions_thread, learner_client, channel, shutdown_event):
+        push_transitions_to_transport_queue(input_transitions, transitions_actor_queue)
+        while len(received_transitions) < len(input_transitions):
+            batch = transitions_learner_queue.get(timeout=RECEIVE_TIMEOUT)
+            received_transitions.extend(bytes_to_transitions(batch))
 
+    assert_no_more_messages(transitions_learner_queue)
     assert len(received_transitions) == len(input_transitions)
     for i, transition in enumerate(received_transitions):
         assert_transitions_equal(transition, input_transitions[i])
@@ -153,7 +163,6 @@ def test_end_to_end_transitions_flow(cfg):
 @pytest.mark.timeout(10)
 def test_end_to_end_interactions_flow(cfg):
     from lerobot.scripts.rl.actor import (
-        establish_learner_connection,
         learner_service_client,
         send_interactions,
     )
@@ -176,7 +185,6 @@ def test_end_to_end_interactions_flow(cfg):
         target=start_learner,
         args=(parameters_queue, transitions_learner_queue, interactions_learner_queue, shutdown_event, cfg),
     )
-    learner_thread.start()
 
     # Establish connection from actor to learner
     policy_cfg = cfg.policy
@@ -184,49 +192,33 @@ def test_end_to_end_interactions_flow(cfg):
         host=policy_cfg.actor_learner_config.learner_host, port=policy_cfg.actor_learner_config.learner_port
     )
 
-    assert establish_learner_connection(learner_client, shutdown_event, attempts=5)
-
     # Start the actor's interaction sending process in a separate thread
     send_interactions_thread = threading.Thread(
         target=send_interactions,
         args=(cfg, interactions_actor_queue, shutdown_event, learner_client, channel),
     )
-    send_interactions_thread.start()
-
-    # Create and push test interactions to the actor's queue
     input_interactions = create_test_interactions(count=5)
-    for interaction in input_interactions:
-        interactions_actor_queue.put(python_object_to_bytes(interaction))
+    with connected_workers(learner_thread, send_interactions_thread, learner_client, channel, shutdown_event):
+        for interaction in input_interactions:
+            interactions_actor_queue.put(python_object_to_bytes(interaction))
+        received_interactions = [
+            bytes_to_python_object(interactions_learner_queue.get(timeout=RECEIVE_TIMEOUT))
+            for _ in input_interactions
+        ]
 
-    # Wait for the communication to happen
-    time.sleep(0.1)
-
-    # Signal shutdown and wait for threads to complete
-    shutdown_event.set()
-    learner_thread.join()
-    send_interactions_thread.join()
-    channel.close()
-
-    # Verify that the learner received the interactions
-    received_interactions = []
-    while not interactions_learner_queue.empty():
-        received_interactions.append(bytes_to_python_object(interactions_learner_queue.get()))
-
-    assert len(received_interactions) == len(input_interactions)
-
+    assert_no_more_messages(interactions_learner_queue)
     # Sort by a unique key to handle potential reordering in queues
     received_interactions.sort(key=lambda x: x["step"])
     input_interactions.sort(key=lambda x: x["step"])
 
-    for received, expected in zip(received_interactions, input_interactions, strict=False):
-        assert received == expected
+    assert received_interactions == input_interactions
 
 
 @require_package("grpc")
 @pytest.mark.parametrize("data_size", ["small", "large"])
 @pytest.mark.timeout(10)
 def test_end_to_end_parameters_flow(cfg, data_size):
-    from lerobot.scripts.rl.actor import establish_learner_connection, learner_service_client, receive_policy
+    from lerobot.scripts.rl.actor import learner_service_client, receive_policy
     from lerobot.scripts.rl.learner import start_learner
     from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
 
@@ -253,7 +245,6 @@ def test_end_to_end_parameters_flow(cfg, data_size):
             cfg,
         ),
     )
-    learner_thread.start()
 
     # Establish connection from actor to learner
     policy_cfg = cfg.policy
@@ -261,14 +252,11 @@ def test_end_to_end_parameters_flow(cfg, data_size):
         host=policy_cfg.actor_learner_config.learner_host, port=policy_cfg.actor_learner_config.learner_port
     )
 
-    assert establish_learner_connection(learner_client, shutdown_event, attempts=5)
-
     # Start the actor's parameter receiving process in a separate thread
     receive_params_thread = threading.Thread(
         target=receive_policy,
         args=(cfg, parameters_actor_queue, shutdown_event, learner_client, channel),
     )
-    receive_params_thread.start()
 
     # Create test parameters based on parametrization
     if data_size == "small":
@@ -277,20 +265,9 @@ def test_end_to_end_parameters_flow(cfg, data_size):
         # CHUNK_SIZE is 2MB, so this tensor (4MB) will force chunking
         input_params = {"large_layer.weight": torch.randn(1024, 1024)}
 
-    # Simulate learner having new parameters to send
-    parameters_learner_queue.put(state_to_bytes(input_params))
-
-    # Wait for the actor to receive the parameters
-    time.sleep(0.1)
-
-    # Signal shutdown and wait for threads to complete
-    shutdown_event.set()
-    learner_thread.join()
-    receive_params_thread.join()
-    channel.close()
-
-    # Verify that the actor received the parameters correctly
-    received_params = bytes_to_state_dict(parameters_actor_queue.get())
+    with connected_workers(learner_thread, receive_params_thread, learner_client, channel, shutdown_event):
+        parameters_learner_queue.put(state_to_bytes(input_params))
+        received_params = bytes_to_state_dict(parameters_actor_queue.get(timeout=RECEIVE_TIMEOUT))
 
     assert received_params.keys() == input_params.keys()
     for key in input_params:
