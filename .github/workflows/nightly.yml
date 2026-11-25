@@ -41,6 +41,7 @@ jobs:
   # This job builds a CPU image for testing & distribution
   build-docker-cpu-nightly:
     name: Build CPU Docker for Nightly
+    if: github.repository == 'huggingface/lerobot'
     runs-on:
       group: aws-general-8-plus
     outputs:
@@ -75,6 +76,7 @@ jobs:
   # This job builds a GPU image for testing & distribution
   build-docker-gpu-nightly:
     name: Build GPU Docker for Nightly
+    if: github.repository == 'huggingface/lerobot'
     runs-on:
       group: aws-general-8-plus
     outputs:
