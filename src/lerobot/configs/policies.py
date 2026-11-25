@@ -27,6 +27,7 @@ from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.constants import ACTION, OBS_STATE
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.hub import HubMixin
@@ -34,6 +35,15 @@ from lerobot.utils.utils import auto_select_torch_device, is_amp_available, is_t
 
 # Generic variable that is either PreTrainedConfig or a subclass thereof
 T = TypeVar("T", bound="PreTrainedConfig")
+
+
+def _preferred_feature(
+    features: dict[str, PolicyFeature], key: str, feature_type: FeatureType
+) -> PolicyFeature | None:
+    feature = features.get(key)
+    if feature is not None and feature.type is feature_type:
+        return feature
+    return next((ft for ft in features.values() if ft.type is feature_type), None)
 
 
 @dataclass
@@ -123,10 +133,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def robot_state_feature(self) -> PolicyFeature | None:
-        for _, ft in self.input_features.items():
-            if ft.type is FeatureType.STATE:
-                return ft
-        return None
+        return _preferred_feature(self.input_features, OBS_STATE, FeatureType.STATE)
 
     @property
     def env_state_feature(self) -> PolicyFeature | None:
@@ -141,10 +148,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def action_feature(self) -> PolicyFeature | None:
-        for _, ft in self.output_features.items():
-            if ft.type is FeatureType.ACTION:
-                return ft
-        return None
+        return _preferred_feature(self.output_features, ACTION, FeatureType.ACTION)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / CONFIG_NAME, "w") as f, draccus.config_type("json"):

@@ -365,6 +365,15 @@ def test_normalize(insert_temporal_dim):
     unnormalize(output_batch)
 
 
+def test_custom_state_and_action_feature_names():
+    state = PolicyFeature(type=FeatureType.STATE, shape=(12,))
+    action = PolicyFeature(type=FeatureType.ACTION, shape=(12,))
+    config = ACTConfig(input_features={"joint_positions": state}, output_features={"joint_targets": action})
+
+    assert config.robot_state_feature is state
+    assert config.action_feature is action
+
+
 @pytest.mark.parametrize("multikey", [True, False])
 def test_multikey_construction(multikey: bool):
     """
