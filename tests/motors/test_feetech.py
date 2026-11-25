@@ -24,6 +24,8 @@ import pytest
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import MODEL_NUMBER, MODEL_NUMBER_TABLE, FeetechMotorsBus
 from lerobot.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE
+from lerobot.robots.so101_follower import SO101Follower
+from lerobot.teleoperators.so101_leader import SO101Leader
 from lerobot.utils.encoding_utils import encode_sign_magnitude
 
 try:
@@ -110,6 +112,26 @@ def test__split_into_byte_chunks(protocol, value, length, expected):
 def test_abc_implementation(dummy_motors):
     """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
     FeetechMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+
+
+@pytest.mark.parametrize("arm_class", [SO101Follower, SO101Leader])
+@pytest.mark.parametrize("options, attempts", [({}, 2), ({"num_retry": 0}, 1)])
+def test_so101_sync_retries(arm_class, options, attempts, mock_motors, tmp_path):
+    arm = arm_class(arm_class.config_class(port=mock_motors.port, calibration_dir=tmp_path))
+    bus = arm.bus
+    bus.connect(handshake=False)
+
+    with patch.object(bus.sync_reader, "txRxPacket", return_value=scs.COMM_RX_TIMEOUT) as read_packet:
+        with pytest.raises(ConnectionError):
+            bus.sync_read("Present_Position", **options)
+        assert read_packet.call_count == attempts
+
+    with patch.object(bus.sync_writer, "txPacket", return_value=scs.COMM_TX_FAIL) as write_packet:
+        with pytest.raises(ConnectionError):
+            bus.sync_write("Goal_Position", {"gripper": 10}, normalize=False, **options)
+        assert write_packet.call_count == attempts
+
+    bus.disconnect(disable_torque=False)
 
 
 @pytest.mark.parametrize("id_", [1, 2, 3])

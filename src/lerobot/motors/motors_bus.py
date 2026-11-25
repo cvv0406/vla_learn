@@ -252,6 +252,7 @@ class MotorsBus(abc.ABC):
     apply_drive_mode: bool
     available_baudrates: list[int]
     default_baudrate: int
+    default_sync_retries: int = 0
     default_timeout: int
     model_baudrate_table: dict[str, dict]
     model_ctrl_table: dict[str, dict]
@@ -1060,7 +1061,7 @@ class MotorsBus(abc.ABC):
         motors: str | list[str] | None = None,
         *,
         normalize: bool = True,
-        num_retry: int = 1,
+        num_retry: int | None = None,
     ) -> dict[str, Value]:
         """Read the same register from several motors at once.
 
@@ -1068,7 +1069,7 @@ class MotorsBus(abc.ABC):
             data_name (str): Register name.
             motors (str | list[str] | None, optional): Motors to query. `None` (default) reads every motor.
             normalize (bool, optional): Normalisation flag.  Defaults to `True`.
-            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+            num_retry (int, optional): Retry attempts. Defaults to the bus's `default_sync_retries`.
 
         Returns:
             dict[str, Value]: Mapping *motor name → value*.
@@ -1090,6 +1091,8 @@ class MotorsBus(abc.ABC):
         model = next(iter(models))
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
+        if num_retry is None:
+            num_retry = self.default_sync_retries
         err_msg = f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
         ids_values, _ = self._sync_read(
             addr, length, ids, num_retry=num_retry, raise_on_error=True, err_msg=err_msg
@@ -1108,7 +1111,7 @@ class MotorsBus(abc.ABC):
         length: int,
         motor_ids: list[int],
         *,
-        num_retry: int = 1,
+        num_retry: int = 0,
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> tuple[dict[int, int], int]:
@@ -1155,7 +1158,7 @@ class MotorsBus(abc.ABC):
         values: Value | dict[str, Value],
         *,
         normalize: bool = True,
-        num_retry: int = 1,
+        num_retry: int | None = None,
     ) -> None:
         """Write the same register on multiple motors.
 
@@ -1168,7 +1171,7 @@ class MotorsBus(abc.ABC):
             values (Value | dict[str, Value]): Either a single value (applied to every motor) or a mapping
                 *motor name → value*.
             normalize (bool, optional): If `True` (default) convert values from the user range to raw units.
-            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+            num_retry (int, optional): Retry attempts. Defaults to the bus's `default_sync_retries`.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(
@@ -1188,6 +1191,8 @@ class MotorsBus(abc.ABC):
 
         ids_values = self._encode_sign(data_name, ids_values)
 
+        if num_retry is None:
+            num_retry = self.default_sync_retries
         err_msg = f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
         self._sync_write(addr, length, ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
@@ -1196,7 +1201,7 @@ class MotorsBus(abc.ABC):
         addr: int,
         length: int,
         ids_values: dict[int, int],
-        num_retry: int = 1,
+        num_retry: int = 0,
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> int:

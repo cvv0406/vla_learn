@@ -54,6 +54,7 @@ class SO101Leader(Teleoperator):
             },
             calibration=self.calibration,
         )
+        self.bus.default_sync_retries = 1
 
     @property
     def action_features(self) -> dict[str, type]:

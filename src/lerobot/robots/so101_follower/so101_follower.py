@@ -58,6 +58,7 @@ class SO101Follower(Robot):
             },
             calibration=self.calibration,
         )
+        self.bus.default_sync_retries = 1
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
