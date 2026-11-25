@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import builtins
 import json
 import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Type, TypeVar
+from typing import TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -151,17 +152,17 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-            cls: Type[T],
-            pretrained_name_or_path: str | Path,
-            *,
-            force_download: bool = False,
-            resume_download: bool = None,
-            proxies: dict | None = None,
-            token: str | bool | None = None,
-            cache_dir: str | Path | None = None,
-            local_files_only: bool = False,
-            revision: str | None = None,
-            **policy_kwargs,
+        cls: builtins.type[T],
+        pretrained_name_or_path: str | Path,
+        *,
+        force_download: bool = False,
+        resume_download: bool = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        **policy_kwargs,
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
