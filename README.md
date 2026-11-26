@@ -1,3 +1,9 @@
+## SZTU 大三机器人工程 · 课程作业
+
+[小组协作 SOP（中文版）](docs/github-collaboration.md) · [下载 PDF](docs/github-collaboration.pdf?raw=1)
+
+第一次交作业请从 SOP 开始，按步骤安装工具、下载并运行 LeRobot，在自己的分支修改，再把作业提交给小组审核合并。
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/lerobot-logo-thumbnail.png" width="100%">
   <br/>
